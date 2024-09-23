@@ -1,10 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Sheet, SheetContent } from "../ui/sheet";
 import Slider from "rc-slider";
 import "rc-slider/assets/index.css";
-import { useUser } from "@clerk/nextjs";
 import { createFeedback } from "@/lib/actions/feedback.actions";
 import { useToast } from "../ui/use-toast";
 import { success } from "@/constants/icons";
@@ -12,6 +11,11 @@ import { Button } from "../ui/button";
 import { usePathname } from "next/navigation";
 import SinglePostLoader from "../shared/SinglePostLoader";
 import useGetChatById from "@/hooks/useGetChatById";
+import { logEvent } from "firebase/analytics";
+import { analytics } from "@/lib/firebase";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
+import { trackEvent } from "@/lib/mixpanel";
+import { creatorUser } from "@/types";
 
 const ChatFeedback = ({
 	chatId,
@@ -25,12 +29,13 @@ const ChatFeedback = ({
 	const [rating, setRating] = useState(5);
 	const [feedbackMessage, setFeedbackMessage] = useState("");
 	const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+	const [creator, setCreator] = useState<creatorUser>();
 	const { toast } = useToast();
 	const pathname = usePathname();
 	const { chat, isChatLoading } = useGetChatById(chatId as string);
 
 	const ratingItems = ["😒", "😞", "😑", "🙂", "😄"];
-	const { user } = useUser();
+	const { currentUser, clientUser } = useCurrentUsersContext();
 	const marks: { [key: number]: JSX.Element } = {
 		1: (
 			<div className="relative text-3xl flex flex-col items-center justify-start h-20 w-14">
@@ -51,20 +56,58 @@ const ChatFeedback = ({
 		),
 	};
 
+	useEffect(() => {
+		const storedCreator = localStorage.getItem("currentCreator");
+		if (storedCreator) {
+			const parsedCreator: creatorUser = JSON.parse(storedCreator);
+			if (parsedCreator) {
+				setCreator(parsedCreator);
+			}
+		}
+	}, []);
+
+	useEffect(() => {
+		trackEvent('Feedback_bottomsheet_impression', {
+			Client_ID: clientUser?._id,
+			User_First_Seen: clientUser?.createdAt?.toString().split('T')[0],
+			Creator_ID: creator?._id,
+			Walletbalace_Available: clientUser?.walletBalance,
+		})
+	}, [])
+
 	const handleSliderChange = (value: any) => {
 		setRating(value);
+		if (value) {
+			logEvent(analytics, "feedback_slider", {
+				clientId: currentUser?._id,
+			});
+		}
 	};
 
 	const handleFeedbackChange = (
 		event: React.ChangeEvent<HTMLTextAreaElement>
 	) => {
 		setFeedbackMessage(event.target.value);
+		if (event.target.value) {
+			logEvent(analytics, "feedback_message", {
+				clientId: currentUser?._id,
+			});
+		}
 	};
 
 	const handleSubmitFeedback = async () => {
-		if (!user || !chat) return;
+		if (!currentUser || !chat) return;
 		try {
-			const userId = user.publicMetadata?.userId as string;
+			trackEvent('Feedback_bottomsheet_submitted', {
+				Client_ID: clientUser?._id,
+				User_First_Seen: clientUser?.createdAt?.toString().split('T')[0],
+				Creator_ID: creator?._id,
+				Feedback_Value: rating,
+				Walletbalace_Available: clientUser?.walletBalance,
+				Text: feedbackMessage,
+			})
+
+			const userId = currentUser?._id as string;
 
 			await createFeedback({
 				creatorId: chat.creatorId as string,
@@ -74,12 +117,19 @@ const ChatFeedback = ({
 				callId: chatId,
 				createdAt: new Date(),
 			});
+
+			logEvent(analytics, "feed_submitted", {
+				clientId: currentUser?._id,
+			});
+
 			setFeedbackSubmitted(true);
 			toast({
+				variant: "destructive",
 				title: "Feedback Submitted Successfully",
 			});
 		} catch (error: any) {
 			toast({
+				variant: "destructive",
 				title: "Failed to Submit Feedback",
 			});
 			console.error("Error submitting feedback:", error);
@@ -89,7 +139,7 @@ const ChatFeedback = ({
 		}
 	};
 
-	if (!user || isChatLoading)
+	if (!currentUser?._id || isChatLoading)
 		return (
 			<>
 				{pathname.includes("meeting") ? (
@@ -115,6 +165,12 @@ const ChatFeedback = ({
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open) {
+					trackEvent('Feedback_bottomsheet_closed', {
+						Client_ID: clientUser?._id,
+						User_First_Seen: clientUser?.createdAt?.toString().split('T')[0],
+						Creator_ID: creator?._id,
+						Walletbalace_Available: clientUser?.walletBalance,
+				});
 					onOpenChange(false); // Trigger the closing function only when the sheet is closed
 				}
 			}}

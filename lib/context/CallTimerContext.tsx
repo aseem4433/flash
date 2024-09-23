@@ -7,8 +7,11 @@ import React, {
 } from "react";
 import { useWalletBalanceContext } from "./WalletBalanceContext";
 import { useToast } from "@/components/ui/use-toast";
-import { useCallStateHooks } from "@stream-io/video-react-sdk";
+import { Call, useCallStateHooks } from "@stream-io/video-react-sdk";
 import { creatorUser } from "@/types";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { db } from "../firebase";
+import * as Sentry from "@sentry/nextjs";
 
 interface CallTimerContextProps {
 	timeLeft: string;
@@ -24,6 +27,7 @@ interface CallTimerProviderProps {
 	children: ReactNode;
 	isVideoCall: boolean;
 	isMeetingOwner: boolean;
+	call?: Call;
 	expert: any;
 }
 
@@ -39,24 +43,16 @@ export const useCallTimerContext = () => {
 	return context;
 };
 
-const formatTimeLeft = (timeLeft: number): string => {
-	const minutes = Math.floor(timeLeft);
-	const seconds = Math.floor((timeLeft - minutes) * 60);
-	const paddedMinutes = minutes.toString().padStart(2, "0");
-	const paddedSeconds = seconds.toString().padStart(2, "0");
-	return `${paddedMinutes}:${paddedSeconds}`;
-};
-
 export const CallTimerProvider = ({
 	children,
 	isVideoCall,
 	isMeetingOwner,
+	call,
 }: CallTimerProviderProps) => {
 	const { toast } = useToast();
 	const [audioRatePerMinute, setAudioRatePerMinute] = useState(0);
 	const [videoRatePerMinute, setVideoRatePerMinute] = useState(0);
 	const [anyModalOpen, setAnyModalOpen] = useState(false);
-	// const [currentCreator, setCurrentCreator] = useState<creatorUser | null>(null);
 	const { useCallStartsAt } = useCallStateHooks();
 
 	const [timeLeft, setTimeLeft] = useState(NaN);
@@ -68,6 +64,7 @@ export const CallTimerProvider = ({
 	const lowBalanceThreshold = 300;
 
 	const callStartedAt = useCallStartsAt();
+	const callId = call?.id.toString();
 
 	const pauseTimer = () => setIsTimerRunning(false);
 	const resumeTimer = () => setIsTimerRunning(true);
@@ -76,7 +73,6 @@ export const CallTimerProvider = ({
 		const storedCreator = localStorage.getItem("currentCreator");
 		if (storedCreator) {
 			const parsedCreator: creatorUser = JSON.parse(storedCreator);
-			// setCurrentCreator(parsedCreator);
 			if (parsedCreator.audioRate) {
 				setAudioRatePerMinute(parseInt(parsedCreator.audioRate, 10));
 			}
@@ -87,16 +83,43 @@ export const CallTimerProvider = ({
 	}, []);
 
 	useEffect(() => {
+		if (!isMeetingOwner || !callId) {
+			return; // Exit early if not the meeting owner or callId is undefined
+		}
 		const ratePerMinute = isVideoCall ? videoRatePerMinute : audioRatePerMinute;
 		let maxCallDuration = (walletBalance / ratePerMinute) * 60; // in seconds
 		maxCallDuration = maxCallDuration > 3600 ? 3600 : maxCallDuration; // Limit to 60 minutes (3600 seconds)
 		if (!callStartedAt) {
-			// If call hasn't started yet, set timeLeft to maxCallDuration
 			setTimeLeft(maxCallDuration);
 			return;
 		}
 
 		const callStartedTime = new Date(callStartedAt);
+		let lastFirestoreUpdateTime = 0; // Track the last update time
+
+		const updateFirestoreTimer = async (
+			timeLeft: number,
+			timeUtilized: number
+		) => {
+			try {
+				const callDocRef = doc(db, "calls", callId);
+				const callDoc = await getDoc(callDocRef);
+				if (callDoc.exists()) {
+					await updateDoc(callDocRef, {
+						timeLeft,
+						timeUtilized,
+					});
+				} else {
+					await setDoc(callDocRef, {
+						timeLeft,
+						timeUtilized,
+					});
+				}
+			} catch (error) {
+				Sentry.captureException(error);
+				console.error("Error updating Firestore timer: ", error);
+			}
+		};
 
 		const intervalId = setInterval(() => {
 			if (isTimerRunning) {
@@ -104,29 +127,31 @@ export const CallTimerProvider = ({
 				const timeUtilized = (now.getTime() - callStartedTime.getTime()) / 1000; // Time in seconds
 
 				const newTimeLeft = maxCallDuration - timeUtilized;
+				const clampedTimeLeft = newTimeLeft > 0 ? newTimeLeft : 0;
 
-				setTimeLeft(newTimeLeft > 0 ? newTimeLeft : 0);
+				setTimeLeft(clampedTimeLeft);
 				setTotalTimeUtilized(timeUtilized);
+				updateFirestoreTimer(clampedTimeLeft, timeUtilized);
 
-				if (newTimeLeft <= 0) {
+				if (clampedTimeLeft <= 0) {
 					clearInterval(intervalId);
-					// endCall();
 				}
 
 				if (
 					isMeetingOwner &&
-					newTimeLeft <= lowBalanceThreshold &&
-					newTimeLeft > 0
+					clampedTimeLeft <= lowBalanceThreshold &&
+					clampedTimeLeft > 0
 				) {
 					setHasLowBalance(true);
 					if (!lowBalanceNotified) {
 						setLowBalanceNotified(true);
 						toast({
+							variant: "destructive",
 							title: "Call Will End Soon",
 							description: "Client's wallet balance is low.",
 						});
 					}
-				} else if (newTimeLeft > lowBalanceThreshold) {
+				} else if (clampedTimeLeft > lowBalanceThreshold) {
 					setHasLowBalance(false);
 					setLowBalanceNotified(false);
 				}
@@ -144,12 +169,13 @@ export const CallTimerProvider = ({
 		toast,
 		callStartedAt,
 		walletBalance,
+		callId,
 	]);
 
 	return (
 		<CallTimerContext.Provider
 			value={{
-				timeLeft: formatTimeLeft(timeLeft),
+				timeLeft: String(timeLeft),
 				hasLowBalance,
 				pauseTimer,
 				resumeTimer,

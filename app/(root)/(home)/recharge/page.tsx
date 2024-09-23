@@ -1,29 +1,36 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Image from "next/image";
 import Script from "next/script";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
+	creatorUser,
 	PaymentFailedResponse,
 	PaymentResponse,
 	RazorpayOptions,
 } from "@/types";
-import { useUser } from "@clerk/nextjs";
+import * as Sentry from "@sentry/nextjs";
 import { useWalletBalanceContext } from "@/lib/context/WalletBalanceContext";
 import Link from "next/link";
-import SinglePostLoader from "@/components/shared/SinglePostLoader";
 import { useToast } from "@/components/ui/use-toast";
+import { logEvent } from "firebase/analytics";
+import { analytics } from "@/lib/firebase";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
+import { Cursor, Typewriter } from "react-simple-typewriter";
+import ContentLoading from "@/components/shared/ContentLoading";
+import { trackEvent } from "@/lib/mixpanel";
 
-const About: React.FC = () => {
+const Recharge: React.FC = () => {
+	const { updateWalletBalance } = useWalletBalanceContext();
+	const { currentUser, clientUser } = useCurrentUsersContext();
+	const { toast } = useToast();
+	const [creator, setCreator] = useState<creatorUser>();
 	const searchParams = useSearchParams();
 	const amount = searchParams.get("amount");
-	const { updateWalletBalance } = useWalletBalanceContext();
 
 	const [method, setMethod] = useState("");
 	const [loading, setLoading] = useState(false);
-	const { user } = useUser();
 	const router = useRouter();
-	const { toast } = useToast();
 	const amountInt: number | null = amount ? parseFloat(amount) : null;
 
 	const subtotal: number | null =
@@ -38,11 +45,77 @@ const About: React.FC = () => {
 			? parseFloat((subtotal + gstAmount).toFixed(2))
 			: null;
 
+	useEffect(() => {
+		const storedCreator = localStorage.getItem("currentCreator");
+		if (storedCreator) {
+			const parsedCreator: creatorUser = JSON.parse(storedCreator);
+			if (parsedCreator) {
+				setCreator(parsedCreator);
+			}
+		}
+	}, []);
+
+	useEffect(() => {
+		trackEvent("Recharge_Page_Cart_review_Impression", {
+			Client_ID: clientUser?._id,
+			User_First_Seen: clientUser?.createdAt?.toString().split("T")[0],
+			Creator_ID: creator?._id,
+			Recharge_value: amount,
+			Walletbalace_Available: clientUser?.walletBalance,
+		});
+	}, []);
+
+	// const PaymentHandler = async () => {
+	// 	const totalPayableInPaise: number = totalPayable! * 100;
+	// 	const rechargeAmount: number = parseInt(totalPayableInPaise.toFixed(2));
+	// 	const currency: string = "INR";
+	// 	const order_id = "1a";
+	// 	const customer_id = currentUser?._id;
+	// 	const customer_phone = currentUser?.phone;
+
+	// 	try {
+	// 		const response: any = await fetch("/api/v1/order_cashfree", {
+	// 			method: "POST",
+	// 			body: JSON.stringify({ rechargeAmount, currency, order_id, customer_id, customer_phone }),
+	// 			headers: { "Content-Type": "application/json" },
+	// 		}
+	// 		);
+
+	// 		const options = {
+	// 			appId: process.env.CASHFREE_APP_ID,
+	// 			orderId: response.orderId,
+	// 			orderAmount: response.amount,
+	// 			orderCurrency: 'INR',
+	// 			customerPhone: response.phone,
+	// 			customerEmail: response.email,
+	// 		};
+
+	// 		window.Cashfree.paySeamless(options, function (response : any) {
+	// 			console.log('Payment response:', response);
+	// 		});
+	// 	} catch (error) {
+	// 		console.log(error);
+	// 	}
+
+	// }
+
 	const PaymentHandler = async (
 		e: React.MouseEvent<HTMLButtonElement, MouseEvent>
 	): Promise<void> => {
 		e.preventDefault();
-		setLoading(true); // Set loading state to true
+
+		trackEvent("Recharge_Page_Proceed_Clicked", {
+			Client_ID: clientUser?._id,
+			User_First_Seen: clientUser?.createdAt?.toString().split("T")[0],
+			Creator_ID: creator?._id,
+			Recharge_value: amount,
+			Walletbalace_Available: clientUser?.walletBalance,
+		});
+
+		logEvent(analytics, "wallet_recharge", {
+			userId: currentUser?._id,
+			// creatorId: creator._id,
+		});
 
 		if (typeof window.Razorpay === "undefined") {
 			console.error("Razorpay SDK is not loaded");
@@ -50,22 +123,22 @@ const About: React.FC = () => {
 			return;
 		}
 
-		const amount: number = totalPayable! * 100;
+		const totalPayableInPaise: number = totalPayable! * 100;
+		const rechargeAmount: number = parseInt(totalPayableInPaise.toFixed(2));
 		const currency: string = "INR";
-		const receiptId: string = "kuchbhi";
 
 		try {
 			const response: Response = await fetch("/api/v1/order", {
 				method: "POST",
-				body: JSON.stringify({ amount, currency, receipt: receiptId }),
+				body: JSON.stringify({ amount: rechargeAmount, currency }),
 				headers: { "Content-Type": "application/json" },
 			});
 
 			const order = await response.json();
 
 			const options: RazorpayOptions = {
-				key: "rzp_test_d8fM9sk9S2Cb2m",
-				amount,
+				key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID as string,
+				rechargeAmount,
 				currency,
 				name: "FlashCall.me",
 				description: "Test Transaction",
@@ -75,6 +148,8 @@ const About: React.FC = () => {
 					const body: PaymentResponse = { ...response };
 
 					try {
+						setLoading(true); // Set loading state to true
+
 						const paymentId = body.razorpay_order_id;
 
 						await fetch("/api/v1/payment", {
@@ -83,6 +158,8 @@ const About: React.FC = () => {
 							headers: { "Content-Type": "text/plain" },
 						});
 					} catch (error) {
+						Sentry.captureException(error);
+
 						console.log(error);
 						setLoading(false); // Set loading state to false on error
 					}
@@ -100,7 +177,7 @@ const About: React.FC = () => {
 						const jsonRes: any = await validateRes.json();
 
 						// Add money to user wallet upon successful validation
-						const userId = user?.publicMetadata?.userId as string; // Replace with actual user ID
+						const userId = currentUser?._id as string; // Replace with actual user ID
 						const userType = "Client"; // Replace with actual user type
 
 						await fetch("/api/v1/wallet/addMoney", {
@@ -113,8 +190,22 @@ const About: React.FC = () => {
 							headers: { "Content-Type": "application/json" },
 						});
 
+						logEvent(analytics, "wallet_recharge_done", {
+							userId: currentUser?._id,
+							amount: amount,
+						});
+
+						trackEvent("Recharge_Successfull", {
+							Client_ID: clientUser?._id,
+							User_First_Seen: clientUser?.createdAt?.toString().split("T")[0],
+							Creator_ID: creator?._id,
+							Recharge_value: amount,
+							Walletbalace_Available: clientUser?.walletBalance,
+						});
+
 						router.push("/success");
 					} catch (error) {
+						Sentry.captureException(error);
 						console.error("Validation request failed:", error);
 						setLoading(false);
 					} finally {
@@ -122,16 +213,16 @@ const About: React.FC = () => {
 					}
 				},
 				prefill: {
-					name: "",
+					name: currentUser?.firstName + " " + currentUser?.lastName,
 					email: "",
-					contact: "",
+					contact: currentUser?.phone as string,
 					method: method,
 				},
 				notes: {
 					address: "Razorpay Corporate Office",
 				},
 				theme: {
-					color: "#F37254",
+					color: "#50A65C",
 				},
 			};
 
@@ -144,20 +235,48 @@ const About: React.FC = () => {
 
 			rzp1.open();
 		} catch (error) {
+			Sentry.captureException(error);
+
+			trackEvent("Recharge_Failed", {
+				Client_ID: clientUser?._id,
+				User_First_Seen: clientUser?.createdAt?.toString().split("T")[0],
+				Creator_ID: creator?._id,
+				Recharge_value: amount,
+				Walletbalace_Available: clientUser?.walletBalance,
+			});
 			console.error("Payment request failed:", error);
 			setLoading(false); // Set loading state to false on error
+			router.push("/payment");
+			toast({
+				variant: "destructive",
+				title: "Payment Failed",
+				description: "Redirecting ...",
+			});
 		}
 	};
 
 	return (
 		<>
 			{loading ? (
-				<section className="absolute top-0 left-0 lg:left-20 flex-center justify-center items-center h-screen w-full z-40">
-					<SinglePostLoader />
+				<section className="w-full h-full flex flex-col items-center justify-center gap-4">
+					<ContentLoading />
+					<h1 className="text-xl md:text-2xl font-semibold">
+						<Typewriter
+							words={["Processing Current Transaction", "Please Wait ..."]}
+							loop={true}
+							cursor
+							cursorStyle="_"
+							typeSpeed={50}
+							deleteSpeed={50}
+							delaySpeed={2000}
+						/>
+						<Cursor cursorColor="#50A65C" />
+					</h1>
 				</section>
 			) : (
-				<div className="overflow-y-scroll no-scrollbar p-4 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 flex flex-col items-center justify-center w-full">
+				<div className="overflow-y-scroll p-4 pt-0 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 flex flex-col items-center justify-center w-full">
 					<Script src="https://checkout.razorpay.com/v1/checkout.js" />
+					{/* <Script src="https://sdk.cashfree.com/js/v3/cashfree.js" /> */}
 
 					{/* Payment Information */}
 					<section className="w-full mb-8 sticky">
@@ -188,7 +307,7 @@ const About: React.FC = () => {
 					</section>
 
 					{/* UPI Payment Options */}
-					<section className="w-full grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-4 mb-8">
+					<section className="w-full grid grid-cols-1  gap-4 mb-5">
 						<div className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow flex flex-col items-start justify-center gap-4 w-full ">
 							<h3 className="text-sm text-gray-500">
 								Pay directly with your favourite UPI apps
@@ -216,12 +335,12 @@ const About: React.FC = () => {
 									</button>
 								))}
 							</div>
-							<button className="text-black">
+							{/* <button className="text-black">
 								Pay with other UPI apps &rarr;
-							</button>
+							</button> */}
 						</div>
 
-						{/* Other Payment Methods */}
+						{/* Other Payment Methods
 
 						<div className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
 							<h3 className="text-sm text-gray-500 font-medium mb-4">
@@ -239,10 +358,10 @@ const About: React.FC = () => {
 									</label>
 								))}
 							</div>
-						</div>
+						</div> */}
 					</section>
 
-					<div className="w-full flex flex-row items-center justify-center opacity-[75%] mb-8">
+					<div className="w-full flex flex-row items-center justify-center opacity-[75%] mb-14">
 						<Image
 							src="/secure.svg"
 							width={20}
@@ -257,7 +376,7 @@ const About: React.FC = () => {
 
 					{/* Payment Button */}
 					<button
-						className="w-full md:w-1/3 mx-auto py-3 text-black bg-white rounded-lg border-2 border-black hover:bg-green-1 hover:text-white font-semibold"
+						className="w-4/5 md:w-1/3 mx-auto py-3 text-black bg-white rounded-lg border-2 border-black hover:bg-green-1 hover:text-white font-semibold fixed bottom-3"
 						style={{ boxShadow: "3px 3px black" }}
 						onClick={PaymentHandler}
 						disabled={loading} // Disable the button when loading
@@ -270,4 +389,4 @@ const About: React.FC = () => {
 	);
 };
 
-export default About;
+export default Recharge;

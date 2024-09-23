@@ -1,8 +1,8 @@
 import { connectToDatabase } from "@/lib/database";
-import { handleError } from "@/lib/utils";
-import { RegisterCallParams, RegisterChatParams, UpdateCallParams } from "@/types";
+import { RegisterCallParams, UpdateCallParams } from "@/types";
 import Call from "../database/models/call.model";
 import Chat from "../database/models/chat.model";
+import * as Sentry from "@sentry/nextjs";
 
 export async function createCall(call: RegisterCallParams | any) {
 	try {
@@ -11,50 +11,62 @@ export async function createCall(call: RegisterCallParams | any) {
 		// console.log(newCall);
 		return newCall.toJSON();
 	} catch (error) {
-		handleError(error);
+		Sentry.captureException(error);
+		console.log(error);
 	}
 }
 
 export async function createChat(chat: any) {
 	try {
-		console.log("inside createChat")
+		console.log(chat);
 		await connectToDatabase();
 		const newChat = await Chat.create(chat);
 		return newChat.toJSON();
 	} catch (error) {
-		handleError(error);
+		Sentry.captureException(error);
+		// console.log(error);
 	}
 }
 
-export async function updateChat(chatId: string, update: any, startedAt: Date, endedAt: Date | undefined) {
+export async function updateChat(
+	chatId: string,
+	update: any,
+	startedAt: Date,
+	endedAt: Date | undefined
+) {
 	try {
 		await connectToDatabase();
 		const updateFields = {
 			...update.fieldsToUpdate, // Include any other fields to update
 			updatedAt: new Date(),
 			startedAt: startedAt,
-			endedAt: endedAt
-		  };
+			endedAt: endedAt,
+		};
 		const updatedChat = await Chat.findOneAndUpdate(
 			{ chatId },
-			{ $push: { chatDetails: update }, $set: { updatedAt: new Date(), updateFields } },
+			{
+				$push: { chatDetails: update },
+				$set: { updatedAt: new Date(), updateFields },
+			},
 			{ new: true, upsert: true }
 		).lean();
 		// console.log(updatedTransaction);
 		return updatedChat;
 	} catch (error) {
+		Sentry.captureException(error);
 		console.error(error);
-		handleError(error);
+		console.log(error);
 	}
 }
 
 export async function getChat(chatId: string) {
 	try {
 		await connectToDatabase();
-		const chats = await Chat.findOne({chatId}).lean();
+		const chats = await Chat.findOne({ chatId }).lean();
 		return chats;
 	} catch (error) {
-		handleError(error);
+		Sentry.captureException(error);
+		console.log(error);
 	}
 }
 
@@ -67,7 +79,8 @@ export async function getCalls() {
 		}
 		return calls.map((call) => call.toJSON());
 	} catch (error) {
-		handleError(error);
+		Sentry.captureException(error);
+		console.log(error);
 	}
 }
 
@@ -82,7 +95,34 @@ export async function getUserCalls(userId: string) {
 		}
 		return calls.map((call) => call.toJSON());
 	} catch (error) {
-		handleError(error);
+		Sentry.captureException(error);
+		console.log(error);
+	}
+}
+
+export async function getUserCallsPaginated(
+	userId: string,
+	page: number,
+	limit: number
+) {
+	try {
+		await connectToDatabase();
+
+		const calls = await Call.find({
+			$or: [{ creator: userId }, { "members.user_id": userId }],
+		})
+			.sort({ startedAt: -1 })
+			.skip((page - 1) * limit)
+			.limit(limit);
+
+		if (!calls || calls.length === 0) {
+			return [];
+		}
+
+		return calls && calls.map((call) => call.toJSON());
+	} catch (error) {
+		Sentry.captureException(error);
+		console.log(error);
 	}
 }
 
@@ -97,7 +137,8 @@ export async function getUserChats(userId: string) {
 		}
 		return chats.map((chat) => chat.toJSON());
 	} catch (error) {
-		handleError(error);
+		Sentry.captureException(error);
+		console.log(error);
 	}
 }
 
@@ -110,7 +151,8 @@ export async function getCallById(callId: string) {
 		if (!call) throw new Error("Call not found");
 		return call.toJSON();
 	} catch (error) {
-		handleError(error);
+		Sentry.captureException(error);
+		console.log(error);
 	}
 }
 
@@ -127,6 +169,7 @@ export async function updateCall(callId: string, call: UpdateCallParams) {
 
 		return updatedCall.toJSON(); // No need to stringify and parse
 	} catch (error) {
-		handleError(error); // Use handleError function for consistent error handling
+		Sentry.captureException(error);
+		console.log(error);
 	}
 }

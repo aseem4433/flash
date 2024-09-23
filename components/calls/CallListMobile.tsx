@@ -1,8 +1,7 @@
 "use client";
 
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, isValidUrl } from "@/lib/utils";
 import { RegisterCallParams } from "@/types";
-import { useUser } from "@clerk/nextjs";
 import React, { useEffect, useState } from "react";
 import ContentLoading from "../shared/ContentLoading";
 import Link from "next/link";
@@ -10,53 +9,64 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import SinglePostLoader from "../shared/SinglePostLoader";
 import FeedbackCheck from "../feedbacks/FeedbackCheck";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
+import { useInView } from "react-intersection-observer";
+import * as Sentry from "@sentry/nextjs";
+import { useWalletBalanceContext } from "@/lib/context/WalletBalanceContext";
+import { getCreatorById } from "@/lib/actions/creator.actions";
 
 const CallListMobile = () => {
 	const [calls, setCalls] = useState<RegisterCallParams[]>([]);
-	const [callsCount, setCallsCount] = useState(8);
+	const [page, setPage] = useState(1); // Track current page
 	const [loading, setLoading] = useState(true);
-	const { user } = useUser();
+	const [isFetching, setIsFetching] = useState(false); // To handle API call in progress
+	const [hasMore, setHasMore] = useState(true); // Track if there are more calls to load
+	const { currentUser } = useCurrentUsersContext();
+	const { walletBalance } = useWalletBalanceContext();
 	const pathname = usePathname();
+	const { ref, inView } = useInView();
 
 	useEffect(() => {
-		const handleScroll = () => {
-			if (
-				window.innerHeight + window.scrollY >=
-				document.body.offsetHeight - 2
-			) {
-				setCallsCount((prevCount) => prevCount + 6);
-			}
-		};
+		const loadMoreCalls = async () => {
+			if (!hasMore || !currentUser || isFetching) return;
 
-		window.addEventListener("scroll", handleScroll);
-		return () => {
-			window.removeEventListener("scroll", handleScroll);
-		};
-	}, []);
-
-	useEffect(() => {
-		const getCalls = async () => {
 			try {
+				setIsFetching(true); // Set fetching state
 				const response = await fetch(
 					`/api/v1/calls/getUserCalls?userId=${String(
-						user?.publicMetadata?.userId
-					)}`
+						currentUser?._id
+					)}&page=${page}&limit=8`
 				);
 				const data = await response.json();
-				setCalls(data);
+				// If no more data, stop further API calls
+				if (data.length === 0) {
+					setHasMore(false);
+				} else {
+					// Fetch creator details for each call
+					const callsWithCreatorDetails = await Promise.all(
+						data.map(async (call: RegisterCallParams) => {
+							const creatorDetails = await getCreatorById(
+								call.members[0].user_id
+							);
+							return { ...call, creatorDetails };
+						})
+					);
+
+					setCalls((prevCalls) => [...prevCalls, ...callsWithCreatorDetails]);
+					setPage((prevPage) => prevPage + 1);
+				}
 			} catch (error) {
-				console.warn(error);
+				Sentry.captureException(error);
+				console.log(error);
 			} finally {
 				setLoading(false);
+				setIsFetching(false);
 			}
 		};
+		loadMoreCalls();
+	}, [inView, currentUser]); // Fetch more calls when user scrolls into view
 
-		getCalls();
-	}, [user]);
-
-	const visibleCalls = calls.slice(0, callsCount);
-
-	if (loading) {
+	if ((loading && calls.length === 0) || (currentUser && walletBalance < 0)) {
 		return (
 			<section className="w-full h-full flex items-center justify-center">
 				<SinglePostLoader />
@@ -72,8 +82,9 @@ const CallListMobile = () => {
 						calls.length > 0 && "xl:grid-cols-2 3xl:grid-cols-3"
 					} items-center gap-5 xl:gap-10 w-full h-fit text-black px-4 overflow-x-hidden no-scrollbar`}
 				>
-					{visibleCalls.map((call, index) => {
+					{calls.map((call, index) => {
 						const formattedDate = formatDateTime(call.startedAt as Date);
+						const creator = call.creatorDetails;
 						return (
 							<div
 								key={index}
@@ -84,12 +95,16 @@ const CallListMobile = () => {
 								<div className="flex flex-col items-start justify-start w-full gap-2">
 									{/* Expert's Details */}
 									<Link
-										href={`/creator/${call.members[0].user_id}`}
+										href={`/${creator?.username}`}
 										className="w-1/2 flex items-center justify-start gap-4 hoverScaleDownEffect"
 									>
 										{/* creator image */}
 										<Image
-											src={call.members[0].custom.image}
+											src={
+												isValidUrl(creator?.photo as string)
+													? (creator?.photo as string)
+													: "/images/defaultProfileImage.png"
+											}
 											alt="Expert"
 											height={1000}
 											width={1000}
@@ -98,9 +113,11 @@ const CallListMobile = () => {
 										{/* creator details */}
 										<div className="flex flex-col">
 											<p className="text-base tracking-wide">
-												{call.members[0].custom.name}
+												{creator?.username}
 											</p>
-											<span className="text-sm text-green-1">Astrologer</span>
+											<span className="text-sm text-green-1">
+												{creator?.profession || "Expert"}
+											</span>
 										</div>
 									</Link>
 									{/* call details */}
@@ -136,14 +153,14 @@ const CallListMobile = () => {
 								</div>
 								{/* StartedAt & Feedbacks */}
 								<div className="w-1/2 flex flex-col items-end justify-between h-full gap-2">
-									<span className="text-sm text-[#A7A8A1] pr-1 pt-1 whitespace-nowrap">
+									<span className="text-sm text-[#A7A8A1] pr-2 pt-1 whitespace-nowrap">
 										{formattedDate.dateTime}
 									</span>
 									{call.status !== "Rejected" ? (
 										<FeedbackCheck callId={call?.callId} />
 									) : (
 										<Link
-											href={`/creator/${call.members[0].user_id}`}
+											href={`/${creator?.username}`}
 											className="animate-enterFromRight lg:animate-enterFromBottom bg-green-1  hover:bg-green-700 text-white font-semibold w-fit mr-1 rounded-md px-4 py-2 text-xs"
 										>
 											Visit Again
@@ -153,13 +170,31 @@ const CallListMobile = () => {
 							</div>
 						);
 					})}
+					{/* Ref for infinite scroll trigger */}
+					{hasMore && isFetching && (
+						<Image
+							src="/icons/loading-circle.svg"
+							alt="Loading..."
+							width={50}
+							height={50}
+							className="mx-auto invert my-4 z-20"
+						/>
+					)}
+
+					{!hasMore && (
+						<div className="text-center text-gray-500 py-4">
+							You have reached the end of the list.
+						</div>
+					)}
+
+					{hasMore && <div ref={ref} className=" mt-10 w-full" />}
 				</section>
 			) : (
 				<div className="flex flex-col w-full items-center justify-center h-full gap-7">
 					<ContentLoading />
 					<h1 className="text-2xl font-semibold text-black">No Orders Yet</h1>
 					<Link
-						href="/"
+						href="/home"
 						className={`flex gap-4 items-center p-4 rounded-lg justify-center bg-green-1 hover:opacity-80 mx-auto w-fit`}
 					>
 						<Image

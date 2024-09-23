@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCallFeedbacks } from "@/lib/actions/feedback.actions";
+import * as Sentry from "@sentry/nextjs";
 
 export async function GET(request: Request) {
 	try {
@@ -15,8 +16,9 @@ export async function GET(request: Request) {
 		}
 
 		const feedbacks = await getCallFeedbacks(callId, creatorId);
-		return NextResponse.json(feedbacks);
+		return NextResponse.json({ feedbacks });
 	} catch (error) {
+		Sentry.captureException(error);
 		console.error(error);
 		return new NextResponse("Internal Server Error", { status: 500 });
 	}

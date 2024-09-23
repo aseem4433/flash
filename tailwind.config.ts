@@ -12,6 +12,8 @@ const config = {
 	theme: {
 		extend: {
 			screens: {
+				xs: "320px",
+				xm: "400px",
 				m: "460px",
 				sm: "584px",
 				md: "768px",
@@ -24,6 +26,7 @@ const config = {
 				default: ["Helvetica", "sans-serif"],
 			},
 			colors: {
+				secondary: "#232323",
 				dark: {
 					1: "#1C1F2E",
 					2: "#161925",
@@ -83,6 +86,10 @@ const config = {
 					"0%": { opacity: "0", transform: "translateY(100%)" },
 					"100%": { opacity: "1", transform: "translateY(0)" },
 				},
+				enterFromTop: {
+					"0%": { opacity: "0", transform: "translateY(-100%)" },
+					"100%": { opacity: "1", transform: "translateY(0)" },
+				},
 			},
 			animation: {
 				"accordion-down": "accordion-down 0.2s ease-out",
@@ -91,10 +98,12 @@ const config = {
 				exitToLeft: "exitToLeft 1s ease-in-out forwards",
 				enterFromLeft: "enterFromLeft 1s ease-in-out forwards",
 				exitToRight: "exitToRight 1s ease-in-out forwards",
-				enterFromBottom: "enterFromBottom 1s ease-in-out forwards",
+				enterFromBottom: "enterFromBottom 0.5s ease-in-out forwards",
+				enterFromTop: "enterFromTop 1s ease-in-out forwards",
 			},
 			backgroundImage: {
-				hero: "url('/images/hero-background.png')",
+				hero: "url('/web/images/grid.png')",
+				pattern: "url('/web/images/pattern.png')",
 			},
 		},
 	},

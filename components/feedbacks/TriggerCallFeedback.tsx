@@ -3,14 +3,16 @@
 import CallFeedback from "@/components/feedbacks/CallFeedback";
 import SinglePostLoader from "@/components/shared/SinglePostLoader";
 import { useToast } from "@/components/ui/use-toast";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 const TriggerCallFeedback = ({ callId }: { callId: string }) => {
 	const router = useRouter();
 	const { toast } = useToast();
 	const [loadingFeedback, setLoadingFeedback] = useState(true);
 	const [showFeedback, setShowFeedback] = useState(false);
+	const creatorURL = localStorage.getItem("creatorURL");
 
 	useEffect(() => {
 		const fetchFeedbacks = async () => {
@@ -22,16 +24,19 @@ const TriggerCallFeedback = ({ callId }: { callId: string }) => {
 
 				if (feedbacks.length > 0) {
 					toast({
+						variant: "destructive",
 						title: "Feedback Already Exists",
-						description: "Returning to HomePage ...",
+						description: "Returning back ...",
 					});
-					router.push("/");
+					router.push(`${creatorURL ? creatorURL : "/home"}`);
 				} else {
 					setShowFeedback(true);
 				}
 			} catch (error) {
+				Sentry.captureException(error);
 				console.error("Error fetching feedbacks:", error);
 				toast({
+					variant: "destructive",
 					title: "Error",
 					description: "An error occurred while fetching feedbacks",
 				});
@@ -46,10 +51,11 @@ const TriggerCallFeedback = ({ callId }: { callId: string }) => {
 	const handleFeedbackClose = async () => {
 		setShowFeedback(false);
 		toast({
+			variant: "destructive",
 			title: "Thanks For The Feedback",
 			description: "Hope to See You Again ...",
 		});
-		router.push("/");
+		router.push(`${creatorURL ? creatorURL : "/home"}`);
 	};
 
 	if (loadingFeedback) {

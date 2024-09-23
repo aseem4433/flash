@@ -17,24 +17,43 @@ import {
 	PaymentResponse,
 	RazorpayOptions,
 } from "@/types";
-import { useUser } from "@clerk/nextjs";
 import { useToast } from "../ui/use-toast";
 import Script from "next/script";
 import { useCallTimerContext } from "@/lib/context/CallTimerContext";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
+import * as Sentry from "@sentry/nextjs";
 
 const RechargeModal = ({
 	setWalletBalance,
-	walletBalance,
 }: {
 	setWalletBalance: React.Dispatch<React.SetStateAction<number>>;
-	walletBalance: number;
 }) => {
 	const [rechargeAmount, setRechargeAmount] = useState("");
 	const [isSheetOpen, setIsSheetOpen] = useState(false);
 	const [onGoingPayment, setOnGoingPayment] = useState(false);
 	const { toast } = useToast();
-	const { user } = useUser();
+	const { currentUser } = useCurrentUsersContext();
 	const { pauseTimer, resumeTimer } = useCallTimerContext();
+
+	useEffect(() => {
+		const handleResize = () => {
+			// Get the viewport height and calculate the 1% vh unit
+			const vh = window.innerHeight * 0.01;
+			// Set the --vh custom property to the root of the document
+			document.documentElement.style.setProperty("--vh", `${vh}px`);
+		};
+
+		// Initial calculation
+		handleResize();
+
+		// Add event listener for resize event to handle keyboard open/close
+		window.addEventListener("resize", handleResize);
+
+		// Cleanup the event listener
+		return () => {
+			window.removeEventListener("resize", handleResize);
+		};
+	}, []);
 
 	useEffect(() => {
 		if (isSheetOpen || onGoingPayment) {
@@ -79,8 +98,8 @@ const RechargeModal = ({
 			const order = await response.json();
 
 			const options: RazorpayOptions = {
-				key: "rzp_test_d8fM9sk9S2Cb2m",
-				amount,
+				key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID as string,
+				rechargeAmount: amount,
 				currency,
 				name: "FlashCall.me",
 				description: "Test Transaction",
@@ -98,6 +117,7 @@ const RechargeModal = ({
 							headers: { "Content-Type": "text/plain" },
 						});
 					} catch (error) {
+						Sentry.captureException(error);
 						console.log(error);
 					}
 
@@ -114,7 +134,7 @@ const RechargeModal = ({
 						const jsonRes: any = await validateRes.json();
 
 						// Add money to user wallet upon successful validation
-						const userId = user?.publicMetadata?.userId as string; // Replace with actual user ID
+						const userId = currentUser?._id as string; // Replace with actual user ID
 						const userType = "Client"; // Replace with actual user type
 						setWalletBalance((prev) => prev + parseInt(rechargeAmount));
 
@@ -129,6 +149,7 @@ const RechargeModal = ({
 						});
 
 						toast({
+							variant: "destructive",
 							title: "Recharge Successful",
 							description: `Credited Rs. ${parseInt(
 								rechargeAmount,
@@ -137,8 +158,10 @@ const RechargeModal = ({
 						});
 						setRechargeAmount("");
 					} catch (error) {
+						Sentry.captureException(error);
 						console.error("Validation request failed:", error);
 						toast({
+							variant: "destructive",
 							title: "Something Went Wrong",
 							description: `Please enter a valid amount`,
 						});
@@ -166,6 +189,7 @@ const RechargeModal = ({
 
 			rzp1.open();
 		} catch (error) {
+			Sentry.captureException(error);
 			console.error("Payment request failed:", error);
 		} finally {
 			setOnGoingPayment(false);
@@ -192,7 +216,8 @@ const RechargeModal = ({
 				</SheetTrigger>
 				<SheetContent
 					side="bottom"
-					className="flex flex-col items-center justify-center border-none rounded-t-xl px-10 py-7 bg-white min-h-[350px] max-h-fit w-full sm:max-w-[444px] mx-auto"
+					className="flex flex-col items-center justify-center border-none rounded-t-xl px-10 py-7 bg-white max-h-[444px] min-h-[420px] w-full sm:max-w-[444px] mx-auto"
+					style={{ height: "calc(var(--vh, 1vh) * 100)" }}
 				>
 					<SheetHeader className="flex flex-col items-center justify-center">
 						<SheetTitle>Your balance is low.</SheetTitle>

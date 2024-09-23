@@ -6,24 +6,35 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import ChatDetails from "@/components/chat/ChatDetails";
 import { SelectedChat } from "@/types";
+import { trackEvent } from '@/lib/mixpanel';
+import { useCurrentUsersContext } from '@/lib/context/CurrentUsersContext';
 
 const ChatDetailsPage = () => {
-    const searchParams = useSearchParams();
-    const [selectedChat, setSelectedChat] = useState<SelectedChat | null>(null);
+    const [creatorId, setCreatorId] = useState<string | null>(null);
+    const { clientUser } = useCurrentUsersContext();
 
     useEffect(() => {
-        const chatData = searchParams.get('selectedChat');
-        if (chatData) {
-            setSelectedChat(JSON.parse(decodeURIComponent(chatData)));
-        }
-    }, [searchParams]);
+        const params = new URLSearchParams(window.location.search);
+        const creatorId = params.get('creatorId');
 
-    if (!selectedChat) {
+        setCreatorId( creatorId );
+    }, []);
+
+    useEffect(() => {
+        trackEvent('OrderHistory_Profile_Clicked', {
+            Client_ID: clientUser?._id,
+			User_First_Seen: clientUser?.createdAt?.toString().split('T')[0],
+			Creator_ID: creatorId,
+			Walletbalace_Available: clientUser?.walletBalance,
+        })
+    }, [])
+
+    if (!creatorId) {
         return <div>Loading...</div>; // Show a loading indicator or message
     }
 
     return (
-        <ChatDetails selectedChat={selectedChat} />
+        < ChatDetails creatorId={creatorId? creatorId: null} />
     );
 }
 

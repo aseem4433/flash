@@ -1,17 +1,153 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Call } from "@stream-io/video-react-sdk";
-import Image from "next/image";
+import { useToast } from "../ui/use-toast";
+import * as Sentry from "@sentry/nextjs";
 
 const MyIncomingCallUI = ({ call }: { call: Call }) => {
+	const { toast } = useToast();
+	const [callState, setCallState] = useState("incoming");
+	const [shownNotification, setShownNotification] = useState(false);
+	const expert = call?.state?.members?.find(
+		(member) => member.custom.type === "expert"
+	);
+
+	useEffect(() => {
+		const registerServiceWorker = async () => {
+			if ("serviceWorker" in navigator) {
+				try {
+					await navigator.serviceWorker.register("/sw.js");
+					console.log("Service Worker registered.");
+				} catch (error) {
+					Sentry.captureException(error);
+					console.error("Service Worker registration failed:", error);
+				}
+			}
+		};
+
+		registerServiceWorker();
+	}, []);
+
+	const showNotification = () => {
+		if ("Notification" in window && Notification.permission === "granted") {
+			navigator.serviceWorker.ready.then((registration) => {
+				registration.showNotification("Incoming Call", {
+					body: `Call from ${call.state.createdBy?.name}`,
+					icon:
+						call?.state?.createdBy?.image || "/images/defaultProfileImage.png",
+					tag: "incoming-call",
+					data: { url: `https://www.flashcall.me/meeting/${call.id}` },
+				});
+			});
+		} else if ("Notification" in window) {
+			Notification.requestPermission().then((result) => {
+				if (result === "granted") {
+					navigator.serviceWorker.ready.then((registration) => {
+						registration.showNotification("Incoming Call", {
+							body: `Call from ${call.state.createdBy?.name}`,
+							icon:
+								call?.state?.createdBy?.image ||
+								"/images/defaultProfileImage.png",
+							tag: "incoming-call",
+							data: { url: `https://www.flashcall.me/meeting/${call.id}` },
+						});
+					});
+				}
+			});
+		}
+	};
+
+	useEffect(() => {
+		let audio: HTMLAudioElement | null = null;
+
+		if (callState === "incoming") {
+			audio = new Audio("/sounds/notification.mp3");
+			audio.loop = true;
+
+			const playPromise = audio.play();
+			if (playPromise !== undefined) {
+				playPromise
+					.then(() => {
+						console.log("Audio autoplay started!");
+					})
+					.catch((error) => {
+						Sentry.captureException(error);
+						console.error("Audio autoplay was prevented:", error);
+					});
+			}
+
+			if (!shownNotification) {
+				showNotification();
+				setShownNotification(true);
+			}
+		}
+
+		// Clean up when callState changes or on component unmount
+		return () => {
+			if (audio) {
+				audio.pause();
+				audio.currentTime = 0;
+			}
+		};
+	}, [callState, shownNotification]);
+
+	// Function to update expert's status
+	const updateExpertStatus = async (phone: string, status: string) => {
+		try {
+			const response = await fetch("/api/set-status", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ phone, status }),
+			});
+
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.message || "Failed to update status");
+			}
+
+			console.log("Expert status updated to:", status);
+		} catch (error) {
+			Sentry.captureException(error);
+			console.error("Error updating expert status:", error);
+		}
+	};
+
+	const handleCallState = async (action: string) => {
+		if (action === "declined") {
+			await call.leave({ reject: true });
+			setCallState("declined");
+		} else if (action === "accepted") {
+			const expertPhone = expert?.custom?.phone;
+			if (expertPhone) {
+				await updateExpertStatus(expertPhone, "Busy");
+			}
+			await call.accept();
+			setCallState("accepted");
+		} else if (action === "ended") {
+			setCallState("ended");
+		}
+
+		toast({
+			variant: "destructive",
+			title: `${action === "declined" ? "Call Declined" : "Call Accepted"}`,
+			description: `${
+				action === "declined"
+					? "Redirecting Back ..."
+					: "Redirecting To Meeting"
+			}`,
+		});
+	};
+
 	return (
-		<div className="text-center bg-dark-2 text-white fixed h-full sm:h-fit z-50 w-full sm:w-[35%] 3xl:[25%] flex flex-col items-center justify-between  py-10 sm:rounded-xl bottom-0 right-0 sm:top-4 sm:right-4 gap-5">
+		<div className="text-center bg-dark-2 text-white fixed h-full sm:h-fit z-50 w-full sm:max-w-sm flex flex-col items-center justify-between py-10 sm:rounded-xl bottom-0 right-0 sm:top-4 sm:right-4 gap-5">
 			<h1 className="font-bold text-xl mb-2">Incoming Call ...</h1>
 			<div className="flex flex-col items-center justify-center gap-10">
-				<Image
-					src={call?.state?.createdBy?.image!}
+				<img
+					src={
+						call?.state?.createdBy?.image || "/images/defaultProfileImage.png"
+					}
 					alt=""
-					width={100}
-					height={100}
 					className="rounded-full w-28 h-28 object-cover"
 					onError={(e) => {
 						e.currentTarget.src = "/images/defaultProfileImage.png";
@@ -27,7 +163,7 @@ const MyIncomingCallUI = ({ call }: { call: Call }) => {
 				<button
 					className="bg-green-500 text-white p-4 rounded-full hoverScaleEffect"
 					onClick={() => {
-						call.accept();
+						handleCallState("accepted");
 					}}
 				>
 					<svg
@@ -47,7 +183,9 @@ const MyIncomingCallUI = ({ call }: { call: Call }) => {
 				</button>
 				<button
 					className="bg-red-500 text-white p-4 rounded-full hoverScaleEffect"
-					onClick={() => call.leave({ reject: true })}
+					onClick={() => {
+						handleCallState("declined");
+					}}
 				>
 					<svg
 						xmlns="http://www.w3.org/2000/svg"

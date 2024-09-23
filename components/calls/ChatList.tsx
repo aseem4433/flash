@@ -1,20 +1,21 @@
 "use client";
 
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, isValidUrl } from "@/lib/utils";
 import { SelectedChat } from "@/types";
-import { useUser } from "@clerk/nextjs";
 import { usePathname, useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
 import ContentLoading from "../shared/ContentLoading";
 import Link from "next/link";
 import Image from "next/image";
 import FeedbackCheck from "../feedbacks/FeedbackCheck";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
+import * as Sentry from "@sentry/nextjs";
 
 const ChatList = () => {
 	const [chats, setChats] = useState<SelectedChat[]>([]);
 	const [chatsCount, setChatsCount] = useState(8);
 	const [loading, setLoading] = useState(true);
-	const { user } = useUser();
+	const { currentUser } = useCurrentUsersContext();
 	const pathname = usePathname();
 	const router = useRouter();
 
@@ -38,13 +39,12 @@ const ChatList = () => {
 		const getChats = async () => {
 			try {
 				const response = await fetch(
-					`/api/v1/chats/getUserChats?userId=${String(
-						user?.publicMetadata?.userId
-					)}`
+					`/api/v1/chats/getUserChats?userId=${String(currentUser?._id)}`
 				);
 				const data = await response.json();
 				setChats(data);
 			} catch (error) {
+				Sentry.captureException(error);
 				console.warn(error);
 			} finally {
 				setLoading(false); // Set loading to false after data is fetched
@@ -52,13 +52,12 @@ const ChatList = () => {
 		};
 
 		getChats();
-	}, [user]);
+	}, [currentUser]);
 
 	const visibleChats = chats.slice(0, chatsCount);
 
 	const handleChatClick = (chat: SelectedChat) => {
-		const chatData = encodeURIComponent(JSON.stringify(chat));
-		router.push(`/chatDetails?selectedChat=${chatData}`); // Redirect to chat details page
+		router.push(`/chatDetails?creatorId=${chat.creator}`); // Redirect to chat details page
 	};
 
 	if (loading) {
@@ -97,7 +96,11 @@ const ChatList = () => {
 									>
 										{/* creator image */}
 										<Image
-											src={chat.members[0].custom.image}
+											src={
+												isValidUrl(chat.members[0].custom.image)
+													? chat.members[0].custom.image
+													: "/images/defaultProfileImage.png"
+											}
 											alt="Expert"
 											height={1000}
 											width={1000}
@@ -137,7 +140,7 @@ const ChatList = () => {
 					<ContentLoading />
 					<h1 className="text-2xl font-semibold text-black">No Orders Yet</h1>
 					<Link
-						href="/"
+						href="/home"
 						className={`flex gap-4 items-center p-4 rounded-lg justify-center bg-green-1 hover:opacity-80 mx-auto w-fit`}
 					>
 						<Image

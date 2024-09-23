@@ -1,17 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Sheet, SheetContent } from "../ui/sheet";
 import Slider from "rc-slider";
 import "rc-slider/assets/index.css";
-import { useUser } from "@clerk/nextjs";
 import { createFeedback } from "@/lib/actions/feedback.actions";
 import { useToast } from "../ui/use-toast";
 import { success } from "@/constants/icons";
 import { useGetCallById } from "@/hooks/useGetCallById";
-import { Button } from "../ui/button";
 import { usePathname } from "next/navigation";
 import SinglePostLoader from "../shared/SinglePostLoader";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
 
 const CallFeedback = ({
 	callId,
@@ -30,7 +29,8 @@ const CallFeedback = ({
 	const { call, isCallLoading } = useGetCallById(String(callId));
 
 	const ratingItems = ["😒", "😞", "😑", "🙂", "😄"];
-	const { user } = useUser();
+	const { currentUser } = useCurrentUsersContext();
+
 	const marks: { [key: number]: JSX.Element } = {
 		1: (
 			<div className="relative text-3xl flex flex-col items-center justify-start h-20 w-14">
@@ -66,9 +66,23 @@ const CallFeedback = ({
 	);
 
 	const handleSubmitFeedback = async () => {
-		if (!user || !call) return;
+		if (!currentUser || !call) {
+			toast({
+				variant: "destructive",
+				title: "Give it another try",
+				description: "Something went wrong",
+			});
+			return;
+		}
+		if (!rating) {
+			toast({
+				variant: "destructive",
+				title: "Feedback Rating is Required",
+			});
+			return;
+		}
 		try {
-			const userId = user.publicMetadata?.userId as string;
+			const userId = currentUser?._id as string;
 
 			await createFeedback({
 				creatorId: expert?.user_id as string,
@@ -80,20 +94,34 @@ const CallFeedback = ({
 			});
 			setFeedbackSubmitted(true);
 			toast({
+				variant: "destructive",
 				title: "Feedback Submitted Successfully",
+				description: "Edit or Review at Order History",
 			});
 		} catch (error: any) {
 			toast({
+				variant: "destructive",
 				title: "Failed to Submit Feedback",
+				description: "Add new at Order History",
 			});
 			console.error("Error submitting feedback:", error);
 		} finally {
-			setRating(2);
+			setRating(5);
 			setFeedbackMessage("");
 		}
 	};
 
-	if (!user || isCallLoading)
+	const handleKeyPress = (event: React.KeyboardEvent) => {
+		if (event.key === "Enter" && feedbackMessage.length >= 3) {
+			event.preventDefault();
+			handleSubmitFeedback();
+		}
+	};
+
+	// Disable submit button if feedback message is less than 3 characters
+	const isSubmitDisabled = !rating;
+
+	if (!currentUser?._id || isCallLoading)
 		return (
 			<>
 				{pathname.includes("meeting") ? (
@@ -168,16 +196,21 @@ const CallFeedback = ({
 						<textarea
 							value={feedbackMessage}
 							onChange={handleFeedbackChange}
+							onKeyDown={handleKeyPress}
 							placeholder="Write your feedback here..."
 							className="w-full p-2 border rounded resize-none h-full max-h-[100px] overflow-y-scroll no-scrollbar outline-none hover:bg-gray-50"
-						></textarea>
+						/>
 
-						<Button
+						<button
 							onClick={handleSubmitFeedback}
-							className="bg-green-1 font-semibold text-white px-4 py-2 rounded-lg hover:opacity-80"
+							className={`bg-green-1 font-semibold text-white px-4 py-2 rounded-lg hover:opacity-80 ${
+								isSubmitDisabled &&
+								"!cursor-not-allowed opacity-50 hover:opacity-50"
+							}`}
+							disabled={isSubmitDisabled}
 						>
 							Submit Feedback
-						</Button>
+						</button>
 					</div>
 				) : (
 					<div className="flex flex-col items-center justify-center min-w-full h-full gap-4">

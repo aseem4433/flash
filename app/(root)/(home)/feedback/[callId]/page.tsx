@@ -1,10 +1,11 @@
 "use client";
 
+import React, { useEffect, useState } from "react";
 import CallFeedback from "@/components/feedbacks/CallFeedback";
 import SinglePostLoader from "@/components/shared/SinglePostLoader";
 import { useToast } from "@/components/ui/use-toast";
 import { useParams, useRouter } from "next/navigation";
-import React, { useEffect, useMemo, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 const CallFeedbackPage = () => {
 	const { callId } = useParams();
@@ -12,6 +13,7 @@ const CallFeedbackPage = () => {
 	const { toast } = useToast();
 	const [loadingFeedback, setLoadingFeedback] = useState(true);
 	const [showFeedback, setShowFeedback] = useState(false);
+	const creatorURL = localStorage.getItem("creatorURL");
 
 	useEffect(() => {
 		const fetchFeedbacks = async () => {
@@ -23,16 +25,19 @@ const CallFeedbackPage = () => {
 
 				if (feedbacks.length > 0) {
 					toast({
+						variant: "destructive",
 						title: "Feedback Already Exists",
 						description: "Returning to HomePage ...",
 					});
-					router.push("/");
+					router.push(`${creatorURL ? creatorURL : "/home"}`);
 				} else {
 					setShowFeedback(true);
 				}
 			} catch (error) {
+				Sentry.captureException(error);
 				console.error("Error fetching feedbacks:", error);
 				toast({
+					variant: "destructive",
 					title: "Error",
 					description: "An error occurred while fetching feedbacks",
 				});
@@ -44,13 +49,28 @@ const CallFeedbackPage = () => {
 		fetchFeedbacks();
 	}, [callId, router, toast]);
 
+	useEffect(() => {
+		const handleResize = () => {
+			const height = window.innerHeight;
+			document.documentElement.style.setProperty("--vh", `${height * 0.01}px`);
+		};
+
+		window.addEventListener("resize", handleResize);
+		handleResize();
+
+		return () => {
+			window.removeEventListener("resize", handleResize);
+		};
+	}, []);
+
 	const handleFeedbackClose = async () => {
 		setShowFeedback(false);
 		toast({
+			variant: "destructive",
 			title: "Thanks For The Feedback",
 			description: "Hope to See You Again ...",
 		});
-		router.push("/");
+		router.push(`${creatorURL ? creatorURL : "/home"}`);
 	};
 
 	if (loadingFeedback) {
@@ -62,7 +82,10 @@ const CallFeedbackPage = () => {
 	}
 
 	return (
-		<section className="w-full h-full flex items-center justify-center">
+		<section
+			style={{ height: "calc(var(--vh, 1vh) * 100)" }}
+			className="w-full flex items-center justify-center"
+		>
 			<CallFeedback
 				callId={callId as string}
 				isOpen={showFeedback}

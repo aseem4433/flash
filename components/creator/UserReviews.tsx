@@ -1,151 +1,197 @@
 "use client";
-import { feedbacks } from "@/constants";
 import React, { useEffect, useState } from "react";
-import { Rating } from "@smastrom/react-rating";
-import {
-	HappyFace,
-	NeutralFace,
-	SadFace,
-	SmilingFace,
-	arrowLeft,
-	arrowRight,
-} from "@/constants/icons";
+import ReviewSlider from "./ReviewSlider";
+import SinglePostLoader from "../shared/SinglePostLoader";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { useToast } from "../ui/use-toast";
+import { useGetCreatorFeedbacks } from "@/lib/react-query/queries";
 
-const customStyles = {
-	itemShapes: [SadFace, NeutralFace, NeutralFace, SmilingFace, HappyFace],
-	activeFillColor: ["#ff3300", "#ffcc00", "#ffcc00", "#79ff4d", "#00cc99"],
-	inactiveFillColor: "#a8a8a8",
-};
+const UserReviews = ({
+	theme,
+	creatorId,
+}: {
+	theme: string;
+	creatorId: string;
+}) => {
+	const [isExpanded, setIsExpanded] = useState(false);
+	const [isLoadMoreButtonHidden, setIsLoadMoreButtonHidden] = useState(false);
+	const [isRefetchButtonHidden, setIsRefetchButtonHidden] = useState(false);
+	const [isFetchingMore, setIsFetchingMore] = useState(false);
 
-const UserReviews = ({ theme }: any) => {
-	const [currentIndex, setCurrentIndex] = useState(0);
-	const lastIndex = feedbacks.length - 1;
-	const [direction, setDirection] = useState("right");
+	const { toast } = useToast();
+	const {
+		data: feedbackData,
+		isLoading,
+		isError,
+		isFetching,
+		fetchNextPage,
+		hasNextPage,
+		refetch,
+	} = useGetCreatorFeedbacks(creatorId);
 
-	// Auto slider (uncomment if needed)
-	useEffect(() => {
-		let sliderInterval = setInterval(() => {
-			setCurrentIndex((prev) => (prev + 1 > lastIndex ? 0 : prev + 1));
-		}, 10000);
-		return () => clearInterval(sliderInterval);
-	}, [currentIndex]);
+	// Safeguard to ensure creatorFeedbacks is always an array
+	const creatorFeedbacks =
+		feedbackData?.pages?.flatMap((page: any) => page) || [];
 
-	const getSliderState = (feedbackIndex: number) => {
-		if (feedbackIndex === currentIndex) return "active";
-		else return "hidden";
+	const handleFetchNextPage = async () => {
+		if (hasNextPage && !isFetching && !isLoadMoreButtonHidden) {
+			setIsFetchingMore(true);
+			setIsLoadMoreButtonHidden(true); // Hide the button
+			await fetchNextPage();
+			setIsFetchingMore(false);
+
+			// Show the button again after a timeout
+			setTimeout(() => {
+				setIsLoadMoreButtonHidden(false);
+			}, 15000); // 15 seconds timeout
+		}
 	};
 
-	const nextSlide = () => {
-		setDirection("right");
-		setCurrentIndex((prev) => (prev + 1 > lastIndex ? 0 : prev + 1));
+	const handleRefetch = async () => {
+		if (!isFetching && !isRefetchButtonHidden) {
+			setIsRefetchButtonHidden(true); // Hide the button
+			await refetch();
+
+			// Show the button again after a timeout
+			setTimeout(() => {
+				setIsRefetchButtonHidden(false);
+			}, 10000); // 10 seconds timeout
+		}
 	};
 
-	const previousSlide = () => {
-		setDirection("left");
-		setCurrentIndex((prev) => (prev - 1 < 0 ? lastIndex : prev - 1));
+	const useScreenSize = () => {
+		const [isMobile, setIsMobile] = useState(false);
+
+		const handleResize = () => {
+			setIsMobile(window.innerWidth < 600);
+		};
+
+		useEffect(() => {
+			handleResize(); // Set initial value
+			window.addEventListener("resize", handleResize);
+			return () => window.removeEventListener("resize", handleResize);
+		}, []);
+
+		return isMobile;
 	};
+
+	const isMobile = useScreenSize();
+
+	const toggleReadMore = () => {
+		setIsExpanded(!isExpanded);
+	};
+
+	const getClampedText = (text: string) => {
+		let charLen = isMobile ? 100 : 200;
+		if (text?.length > 100 && !isExpanded) {
+			return text.slice(0, charLen) + "... ";
+		}
+		return text;
+	};
+
+	if (isLoading) {
+		return (
+			<section className="w-full h-full flex items-center justify-center">
+				<SinglePostLoader />
+			</section>
+		);
+	}
+
+	if (isError) {
+		console.error("Error fetching feedbacks:", isError);
+		toast({
+			variant: "destructive",
+			title: "Error",
+			description: "Failed to fetch feedbacks.",
+		});
+	}
 
 	return (
-		<div
-			className="flex overflow-x-scroll no-scrollbar items-center text-white w-full rounded-t-xl md:rounded-xl xl:w-[60%]"
-			style={{ backgroundColor: theme }}
-		>
-			{feedbacks.map((feedback, index) => {
-				const adjustedIndex = (index + feedbacks.length) % feedbacks.length;
-				const slideState = getSliderState(adjustedIndex);
+		<>
+			{creatorFeedbacks.length > 0 ? (
+				<div
+					className={`relative text-white size-full ${
+						creatorFeedbacks.length > 1 ? "py-10" : "pt-10 pb-4"
+					} rounded-t-[24px] lg:rounded-[24px] xl:w-[60%]`}
+					style={{ backgroundColor: theme }}
+				>
+					<h2 className="text-2xl font-semibold">Happy Client&apos;s</h2>
 
-				let transitionClass = "";
+					{/* main section */}
+					<ReviewSlider
+						creatorFeedbacks={creatorFeedbacks}
+						getClampedText={getClampedText}
+						isExpanded={isExpanded}
+						setIsExpanded={setIsExpanded}
+						toggleReadMore={toggleReadMore}
+					/>
 
-				if (slideState === "active") {
-					transitionClass =
-						direction === "right"
-							? "animate-enterFromRight"
-							: "animate-enterFromLeft";
-				} else {
-					transitionClass =
-						direction === "right"
-							? "animate-exitToLeft"
-							: "animate-exitToRight";
-				}
-				return (
-					<div
-						key={index + adjustedIndex}
-						className={` ${slideState} relative`}
-					>
-						<h2 className="text-2xl font-semibold">Happy Client&apos;s</h2>
-						<div
-							className={`${transitionClass} flex flex-col items-center justify-center`}
-						>
-							{/* Profile Image */}
-							<div className="flex w-fit mx-auto rounded-full items-center justify-center gap-2 bg-black px-4 py-2 z-10">
-								<img
-									src={feedback.imageURL}
-									alt={`${feedback.username}'s profile`}
-									width={24}
-									height={24}
-									className="w-7 h-7 rounded-full object-cover"
-								/>
-								<span className="text-3xl">😍</span>
-							</div>
-							<div className="flex flex-col items-start justfy-center gap-4 w-full rounded-xl px-5 pb-5 pt-10 -mt-4 bg-black/10">
-								{/* Rating */}
-								<div className="flex gap-1 items-center">
-									<Rating
-										style={{ maxWidth: 180, fill: "white" }}
-										value={Math.floor(feedback.ratings)}
-										itemStyles={customStyles}
-										items={5}
-										spaceBetween="medium"
-										transition="zoom"
-										readOnly
-									/>
-								</div>
-
-								{/* Feedback */}
-								<p className="w-full h-[125px] overflow-y-scroll no-scrollbar text-start">
-									{feedback.feedback}
-								</p>
-
-								{/* User Details */}
-								<div className="flex flex-col items-start justify-center gap-1">
-									<p className="text-lg font-semibold">{feedback.username}</p>
-									<p className="text-sm font-semibold">{feedback.location}</p>
-								</div>
-							</div>
-						</div>
-
-						{/* navigation arrow */}
-						<div className="flex items-center justify-evenly">
-							<button
-								className="bg-black/10 text-white w-10 h-10 rounded-full p-2 hoverScaleEffect hover:bg-black/50"
-								onClick={previousSlide}
-							>
-								{arrowLeft}
-							</button>
-							<div className="flex gap-2 items-center max-w-[50%] md:max-w-[75%] py-2 overflow-x-scroll no-scrollbar">
-								{feedbacks.map((_, index) => (
+					{/* Fetch More Button */}
+					<Tooltip>
+						<TooltipTrigger asChild>
+							{hasNextPage &&
+								!isFetchingMore &&
+								!isLoadMoreButtonHidden &&
+								!isFetching && (
 									<button
-										key={index}
-										className={`${
-											index === currentIndex && "!bg-black/50"
-										} bg-black/10 w-5 h-5 rounded-full p-5 flex items-center justify-center hoverScaleEffect hover:bg-black/50`}
-										onClick={() => setCurrentIndex(index)}
+										onClick={handleFetchNextPage}
+										className="absolute top-0 right-16 mt-4 p-2 bg-[#232323]/35 rounded-full text-white hoverScaleDownEffect"
 									>
-										<span className="mx-auto">{index + 1}</span>
+										<svg
+											xmlns="http://www.w3.org/2000/svg"
+											fill="none"
+											viewBox="0 0 24 24"
+											strokeWidth={1.5}
+											stroke="currentColor"
+											className="size-5"
+										>
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												d="m12.75 15 3-3m0 0-3-3m3 3h-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+											/>
+										</svg>
 									</button>
-								))}
-							</div>
-							<button
-								className="bg-black/10 text-white w-10 h-10 rounded-full p-2 hoverScaleEffect hover:bg-black/50"
-								onClick={nextSlide}
-							>
-								{arrowRight}
-							</button>
-						</div>
-					</div>
-				);
-			})}
-		</div>
+								)}
+						</TooltipTrigger>
+						<TooltipContent className="bg-green-1 border-none text-white">
+							<span>Load More</span>
+						</TooltipContent>
+					</Tooltip>
+
+					<Tooltip>
+						<TooltipTrigger asChild>
+							{!isFetching && !isRefetchButtonHidden && (
+								<button
+									onClick={handleRefetch}
+									className="absolute top-0 right-6 mt-4 p-2 bg-[#232323]/35 rounded-full text-white hoverScaleDownEffect"
+								>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+										strokeWidth={1.5}
+										stroke="currentColor"
+										className="size-5"
+									>
+										<path
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"
+										/>
+									</svg>
+								</button>
+							)}
+						</TooltipTrigger>
+						<TooltipContent className="bg-green-1 border-none text-white">
+							<span>Refresh List</span>
+						</TooltipContent>
+					</Tooltip>
+				</div>
+			) : (
+				<div className="-mt-2.5" />
+			)}
+		</>
 	);
 };
 

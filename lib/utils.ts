@@ -70,3 +70,98 @@ export const formatDateTime = (dateString: Date) => {
 		timeOnly: formattedTime,
 	};
 };
+
+export const calculateTotalEarnings = (transactions: any) => {
+	return transactions.reduce((total: number, transaction: any) => {
+		if (transaction.type === "credit") {
+			return total + transaction.amount;
+		} else if (transaction.type === "debit") {
+			return total - transaction.amount;
+		}
+		return total.toFixed(2); // Default case if type is invalid
+	}, 0);
+};
+
+export const analyticEvent = ({ action, category, label, value }: any) => {
+	(window as any).gtag("event", action, {
+		event_category: category,
+		event_label: label,
+		value: value,
+	});
+};
+
+export const isValidUrl = (url: string) => {
+	try {
+		new URL(url);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+export const isValidImageUrl = async (url: string) => {
+	try {
+		// First, check if the URL is a valid URL
+		const parsedUrl = new URL(url);
+
+		// Then, fetch the headers to validate the URL points to an image
+		const response = await fetch(parsedUrl.toString(), { method: "HEAD" });
+
+		// Check if the response is OK and if the Content-Type is an image type
+		const contentType = response.headers.get("Content-Type");
+		if (response.ok && contentType && contentType.startsWith("image/")) {
+			return true;
+		}
+
+		return false;
+	} catch (error) {
+		// If any error occurs, return false
+		console.error("Invalid image URL:", error);
+		return false;
+	}
+};
+
+export const imageSrc = (creator: any) => {
+	const isValidUrl = (url: string) => {
+		try {
+			new URL(url);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	if (creator.photo && isValidUrl(creator.photo)) {
+		return creator.photo;
+	} else {
+		return "/images/defaultProfileImage.png";
+	}
+};
+
+export function debounce<T extends (...args: any[]) => any>(
+	func: T,
+	wait: number
+) {
+	let timeout: ReturnType<typeof setTimeout>;
+
+	return function (this: ThisParameterType<T>, ...args: Parameters<T>) {
+		clearTimeout(timeout);
+		timeout = setTimeout(() => func.apply(this, args), wait);
+	};
+}
+
+export const isValidHexColor = (color: string): boolean => {
+	// Check if the color is a valid 6-digit or 3-digit hex code
+	return /^#([0-9A-F]{3}){1,2}$/i.test(color);
+};
+
+// Regular expression to validate username
+const usernameRegex = /^[a-zA-Z0-9_-]+$/;
+
+// Function to validate username
+export const validateUsername = (username: string) => {
+	if (!usernameRegex.test(username)) {
+		return false;
+	}
+	return true;
+};

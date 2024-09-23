@@ -1,5 +1,4 @@
 // WalletBalanceContext.tsx
-import { useUser } from "@clerk/nextjs";
 import React, {
 	createContext,
 	useContext,
@@ -8,8 +7,9 @@ import React, {
 	useEffect,
 } from "react";
 import { getUserById } from "../actions/client.actions";
-import { clientUser } from "@/types";
-import Loader from "@/components/shared/Loader";
+import { getCreatorById } from "../actions/creator.actions";
+import { useCurrentUsersContext } from "./CurrentUsersContext";
+import * as Sentry from "@sentry/nextjs";
 
 interface WalletBalanceContextProps {
 	walletBalance: number;
@@ -36,42 +36,45 @@ export const WalletBalanceProvider = ({
 }: {
 	children: ReactNode;
 }) => {
-	const [walletBalance, setWalletBalance] = useState<number>(0);
-	const [loading, setLoading] = useState<boolean>(true);
+	const { currentUser, userType, authenticationSheetOpen } =
+		useCurrentUsersContext();
+	const [walletBalance, setWalletBalance] = useState<number>(
+		currentUser?.walletBalance ?? -1
+	);
+	const isCreator = userType === "creator";
 
-	const { user, isLoaded } = useUser();
+	const updateAndSetWalletBalance = async () => {
+		if (currentUser?._id) {
+			try {
+				const response = isCreator
+					? await getCreatorById(currentUser._id)
+					: await getUserById(currentUser._id);
+				setWalletBalance(response.walletBalance ?? 0);
+			} catch (error) {
+				Sentry.captureException(error);
+				console.error("Error fetching current user:", error);
+				setWalletBalance(0);
+			}
+		}
+	};
 
-	const fetchCurrentUser = async () => {
+	const fetchAndSetWalletBalance = async () => {
 		try {
-			setLoading(true);
-			const response = await getUserById(
-				user?.publicMetadata?.userId as string
-			);
-			setWalletBalance(response.walletBalance || 0);
+			currentUser && setWalletBalance(currentUser?.walletBalance ?? 0);
 		} catch (error) {
+			Sentry.captureException(error);
 			console.error("Error fetching current user:", error);
-		} finally {
-			setLoading(false);
+			setWalletBalance(0);
 		}
 	};
 
 	useEffect(() => {
-		if (isLoaded && user) {
-			fetchCurrentUser();
-		} else {
-			setLoading(false);
-		}
-	}, [isLoaded, user]);
+		fetchAndSetWalletBalance();
+	}, [userType, authenticationSheetOpen, isCreator]);
 
 	const updateWalletBalance = async () => {
-		if (user) {
-			await fetchCurrentUser();
-		}
+		await updateAndSetWalletBalance();
 	};
-
-	if (loading) {
-		return <Loader />;
-	}
 
 	return (
 		<WalletBalanceContext.Provider

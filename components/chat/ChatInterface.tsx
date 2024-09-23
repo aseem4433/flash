@@ -9,8 +9,7 @@ import {
 	updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useUser } from "@clerk/nextjs";
-import upload from '../../lib/upload'
+import upload from "../../lib/upload";
 import Messages from "@/components/chat/Messages";
 import ChatInput from "@/components/chat/ChatInput";
 import useUserStatus from "@/hooks/useUserStatus";
@@ -18,12 +17,36 @@ import useMediaRecorder from "@/hooks/useMediaRecorder";
 import ChatTimer from "./ChatTimer";
 import EndCallDecision from "../calls/EndCallDecision";
 import useEndChat from "@/hooks/useEndChat";
-
+import ContentLoading from "../shared/ContentLoading";
+import RechargeAndTip from "./Tip";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
+import CreatorChatTimer from "../creator/CreatorChatTimer";
+import Recharge from "./Recharge";
+import Tip from "./Tip";
 
 const ChatInterface: React.FC = () => {
-	const { handleEnd, chat, markMessagesAsSeen } = useEndChat();
-	const { user } = useUser();
+	const [text, setText] = useState("");
+	const [isImgUploading, setIsImgUploading] = useState(false);
+	const [isAudioUploading, setIsAudioUploading] = useState(false);
+	const [showDialog, setShowDialog] = useState(false);
+	const [receiverId, setReceiverId] = useState(null);
+	const [img, setImg] = useState({
+		file: null,
+		url: "",
+	});
+	const [audio, setAudio] = useState<{ file: Blob | null; url: string }>({
+		file: null,
+		url: "",
+	});
+	const [messages, setMessages] = useState<
+		{ text: string | null; img: string | null; audio: string | null }[]
+	>([]);
+
 	useUserStatus();
+
+	const { handleEnd, chat, markMessagesAsSeen, loading } = useEndChat();
+	const { currentUser, userType } = useCurrentUsersContext();
+	const { user2, chatId } = useEndChat();
 	const {
 		audioStream,
 		isRecording,
@@ -34,21 +57,15 @@ const ChatInterface: React.FC = () => {
 		mediaRecorderRef,
 		setIsRecording,
 	} = useMediaRecorder();
-	const [text, setText] = useState("");
-	const [isImgUploading, setIsImgUploading] = useState(false);
-	const [isAudioUploading, setIsAudioUploading] = useState(false);
-	const [img, setImg] = useState({
-		file: null,
-		url: "",
-	});
-	const [showDialog, setShowDialog] = useState(false);
-	const [audio, setAudio] = useState<{ file: Blob | null; url: string }>({
-		file: null,
-		url: "",
-	});
-	const [receiverId, setReceiverId] = useState(null);
+
 	const audioContext = new AudioContext();
-	const { user2, chatId } = useEndChat();
+
+	useEffect(() => {
+		updateDoc(doc(db, "chats", chatId as string), {
+			startedAt: Date.now(),
+			endedAt: null,
+		});
+	}, []);
 
 	useEffect(() => {
 		const fetchReceiverId = async () => {
@@ -56,7 +73,7 @@ const ChatInterface: React.FC = () => {
 				const currentUserChatsRef = doc(
 					db,
 					"userchats",
-					user?.publicMetadata?.userId as string
+					currentUser?._id as string
 				);
 				const currentUserChatsSnapshot = await getDoc(currentUserChatsRef);
 
@@ -71,13 +88,11 @@ const ChatInterface: React.FC = () => {
 				console.error("Error fetching receiver ID:", error);
 			}
 		};
-
 		fetchReceiverId();
-	}, [chatId, user?.publicMetadata?.userId, db]);
+	}, [chatId, currentUser?._id, messages, db]);
 
 	useEffect(() => {
 		if (!receiverId) return;
-
 		const unsubscribe = onSnapshot(
 			doc(db, "userchats", receiverId),
 			(docSnapshot) => {
@@ -85,16 +100,29 @@ const ChatInterface: React.FC = () => {
 					const data = docSnapshot.data();
 					if (data.online) {
 						markMessagesAsSeen();
+						setReceiverId(null);
 					}
 				}
 			}
 		);
-
 		return () => unsubscribe();
 	}, [receiverId, db]);
 
-	const handleImg = (e: any) => {
+	const handleCapturedImg = (e: any) => {
 		if (e.target.files && e.target.files[0]) {
+			console.log("hehe");
+			setImg({
+				file: e.target.files[0],
+				url: URL.createObjectURL(e.target.files[0]),
+			});
+			handleSend();
+		}
+	};
+
+	const handleImg = (e: any) => {
+		console.log("hehe");
+		if (e.target.files && e.target.files[0]) {
+			console.log("hehe2");
 			setImg({
 				file: e.target.files[0],
 				url: URL.createObjectURL(e.target.files[0]),
@@ -112,16 +140,13 @@ const ChatInterface: React.FC = () => {
 
 	const handleSend = async () => {
 		if (text === "" && !img.file && !audio.file) return;
-
-		let imgUrl = null;
-		let audioUrl = null;
-
+		let imgUrl: string | null = null;
+		let audioUrl: string | null = null;
 		try {
 			if (!chatId) {
 				console.log("invalid chatId");
 				return;
 			}
-
 			if (img.file) {
 				setIsImgUploading(true);
 				imgUrl = await upload(img.file, "image");
@@ -132,10 +157,9 @@ const ChatInterface: React.FC = () => {
 				audioUrl = await handleAudio();
 				setIsAudioUploading(false);
 			}
-
 			await updateDoc(doc(db, "chats", chatId as string), {
 				messages: arrayUnion({
-					senderId: user?.publicMetadata?.userId as string,
+					senderId: currentUser?._id as string,
 					createdAt: Date.now(),
 					seen: false,
 					text,
@@ -143,17 +167,15 @@ const ChatInterface: React.FC = () => {
 					audio: audioUrl,
 				}),
 			});
-
-			const userIDs = [
-				user2?.clientId as string,
-				user2?.creatorId as string
-			];
-
+			setMessages((prevMessages) => [
+				...prevMessages,
+				{ text: null, img: imgUrl, audio: audioUrl },
+			]);
+			const userIDs = [user2?.clientId as string, user2?.creatorId as string];
 			userIDs.forEach(async (id) => {
 				if (!id) return;
 				const userChatsRef = doc(db, "userchats", id);
 				const userChatsSnapshot = await getDoc(userChatsRef);
-
 				if (userChatsSnapshot.exists()) {
 					const userChatsData = userChatsSnapshot.data();
 					const chatIndex = userChatsData.chats.findIndex(
@@ -195,21 +217,22 @@ const ChatInterface: React.FC = () => {
 	const handleSendAudio = async (audioBlob: Blob, audioUrl: string) => {
 		setIsAudioUploading(true);
 
+		let imgUrl = null;
+
 		try {
 			const audioUploadUrl = await upload(audioBlob, "audio");
 			await updateDoc(doc(db, "chats", chatId as string), {
 				messages: arrayUnion({
-					senderId: user?.publicMetadata?.userId as string,
+					senderId: currentUser?._id as string,
 					createdAt: Date.now(),
 					seen: false,
+					text: null,
+					img: imgUrl,
 					audio: audioUploadUrl,
 				}),
 			});
 
-			const userIDs = [
-				user?.publicMetadata?.userId as string,
-				user2?._id as string,
-			];
+			const userIDs = [user2?.clientId as string, user2?.creatorId as string];
 
 			userIDs.forEach(async (id) => {
 				const userChatsRef = doc(db, "userchats", id);
@@ -272,95 +295,102 @@ const ChatInterface: React.FC = () => {
 	};
 
 	const endCall = async () => {
-		setShowDialog(true); // Show the confirmation dialog
-		// setAnyModalOpen(true);
+		setShowDialog(true);
 	};
 
 	const handleDecisionDialog = async () => {
-		await handleEnd(chatId as string, user2);
+		await handleEnd(chatId as string, user2, userType as string);
 		setShowDialog(false);
-		// isMeetingOwner && router.push(`/feedback/${call?.id}/${totalTimeUtilized}`);
-		// toast({
-		// 	title: "Call Ended",
-		// 	description: "The call Ended. Redirecting ...",
-		// });
+	};
+
+	const discardImage = () => {
+		setIsImgUploading(false);
+		setImg({
+			file: null,
+			url: "",
+		});
 	};
 
 	const handleCloseDialog = () => {
 		setShowDialog(false);
 	};
 
-	
-
 	return (
 		<div
-			className="relative flex flex-col h-screen z-50"
-			style={{ backgroundBlendMode: "luminosity" }}
+			className={`relative flex flex-col h-screen z-50`}
+			// style={{ backgroundBlendMode: "luminosity" }}
 		>
-			<div className="absolute inset-0 bg-[url('/back.png')] bg-cover bg-center filter brightness-[0.25] blur-sx z-0" />
-			<div className="absolute inset-0 bg-gradient-to-b from-[#232323] via-[#464646] to-[#383c39] opacity-90 z-0" />
+			<div className="absolute inset-0 bg-[url('/back.png')] bg-cover bg-center z-0" />
 
-			<div className="relative flex flex-col h-full z-10">
-				<div className="sticky top-0 left-0 flex justify-between items-center px-5 py-4 bg-[#2c2c2c]">
+			{/* <div className="absolute inset-0 bg-[url('/back.png')] bg-cover bg-center filter brightness-[0.25] blur-sx z-0" /> */}
+			{/* <div className="absolute inset-0 bg-gradient-to-b from-[#232323] via-[#464646] to-[#383c39] opacity-90 z-0" /> */}
+
+			<div className="relative flex flex-col h-full">
+				{/* Sticky Header */}
+				<div className="sticky top-0 left-0 flex justify-between items-center px-4 py-[2px] bg-gray-500 z-40">
 					<div className="flex items-center gap-2">
 						<Image
 							src={user2?.photo || "/avatar.svg"}
 							alt="profile"
-							width={40}
-							height={40}
-							className="rounded-full"
+							width={0}
+							height={0}
+							className="w-10 h-10 rounded-full"
 						/>
 						<div className="flex flex-col">
-							<p
-								className="text-sm leading-4"
-								style={{ color: "rgba(112, 112, 112, 1)" }}
-							>
-								Ongoing chat with
-							</p>
-							<div className="text-white font-bold leading-6 text-xl">
-								{user2?.fullName || "Username"}
+							<div className="text-white font-bold text-xs md:text-lg">
+								{currentUser?.username ?? "Username"}
 							</div>
+							{userType === "client" && <ChatTimer />}
+							{userType === "creator" && (
+								<CreatorChatTimer chatId={chatId as string} />
+							)}
+							<p className="text-[10px] md:text-sm text-green-500">
+								Ongoing chat
+							</p>
 						</div>
 					</div>
-					<button
-						onClick={endCall}
-						className="bg-[rgba(255,81,81,1)] text-white px-4 py-3 rounded-lg"
-					>
-						End Chat
-					</button>
-
+					<div className="flex gap-2">
+						<Tip />
+						<button
+							onClick={endCall}
+							className="bg-[rgba(255,81,81,1)] text-white p-2 md:px-4 md:py-2 text-[10px] md:text-lg rounded-lg"
+						>
+							End
+						</button>
+					</div>
 				</div>
+
 				{showDialog && (
 					<EndCallDecision
 						handleDecisionDialog={handleDecisionDialog}
 						setShowDialog={handleCloseDialog}
 					/>
 				)}
-				<ChatTimer endCall={endCall} />
-				<div className="w-1/4 mx-auto text-center bg-[rgba(255,255,255,0.24)] py-1 text-white text-xs leading-6 font-bold rounded-lg mt-2 mb-4">
-					07 Dec 2024
+
+				{/* Chat Messages */}
+				<div className="flex-1 overflow-y-auto scrollbar-none z-30">
+					<Messages chat={chat!} img={img} isImgUploading={isImgUploading} />
 				</div>
 
-				<Messages chat={chat!} img={img} isImgUploading={isImgUploading} />
-
-				{/* <div className="flex justify-between items-center p-4 bg-[rgba(255,255,255,0.24)] mb-3">
-                    <div className="leading-5 font-normal text-white">Recharge to continue this <br /> Audio call.</div>
-                    <RechargeModal setWalletBalance={setWalletBalance} />
-                </div> */}
-
-				<ChatInput
-					isRecording={isRecording}
-					discardAudio={discardAudio}
-					text={text}
-					setText={setText}
-					handleImg={handleImg}
-					handleSend={handleSend}
-					toggleRecording={toggleRecording}
-					img={img}
-					audio={audio}
-					audioStream={audioStream!}
-					audioContext={audioContext}
-				/>
+				{/* Sticky Chat Input at the Bottom */}
+				<div className="sticky bottom-0 w-full z-40">
+					<ChatInput
+						isRecording={isRecording}
+						discardAudio={discardAudio}
+						text={text}
+						setText={setText}
+						handleImg={handleImg}
+						handleSend={handleSend}
+						toggleRecording={toggleRecording}
+						img={img}
+						audio={audio}
+						audioStream={audioStream!}
+						audioContext={audioContext}
+						handleCapturedImg={handleCapturedImg}
+						isImgUploading={isImgUploading}
+						discardImage={discardImage}
+					/>
+				</div>
 			</div>
 		</div>
 	);

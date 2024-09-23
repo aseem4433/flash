@@ -1,41 +1,50 @@
-import { toast } from "@/components/ui/use-toast";
-import { getUserById } from "@/lib/actions/creator.actions";
-import CallTransactions from "@/lib/database/models/callTransactions.model";
-
-// Import the CallTransaction model
+import { getCreatorById } from "@/lib/actions/creator.actions";
+import { analytics } from "@/lib/firebase";
+import { logEvent } from "firebase/analytics";
+import * as Sentry from "@sentry/nextjs";
 
 export const handleTransaction = async ({
 	duration,
 	clientId,
 	chatId,
+	creatorId,
 	router,
 	toast,
 	updateWalletBalance,
+	setTransactionDone,
 }: {
 	duration: string | undefined;
 	clientId: string | undefined;
 	chatId: string | string[];
+	creatorId: string | undefined;
 	router: any;
 	toast: any;
 	updateWalletBalance: () => Promise<void>;
+	setTransactionDone: React.Dispatch<React.SetStateAction<boolean>>;
 }) => {
 	// console.log("duration in handleTransaction", duration);
 	if (!duration) return;
 
-	const creatorId = "664c90ae43f0af8f1b3d5803";
-
 	try {
-		const creator = await getUserById(creatorId);
+		setTransactionDone(true);
+		const roundToNearestThousand = (num: number) => {
+			return Math.round(num / 1000) * 1000;
+		};
+		const creator = await getCreatorById(creatorId!);
 		const rate = creator.chatRate;
 		const amountToBePaid = (
-			(parseInt(duration, 10) / (1000 * 60)) *
+			(roundToNearestThousand(parseInt(duration, 10)) / (1000 * 60)) *
 			rate
-		).toFixed(2);
+		).toFixed(1);
 		// console.log("amount paid", amountToBePaid);
 		// console.log("clientID: ", clientId)
 
 		if (amountToBePaid && clientId) {
-			console.log("1")
+			logEvent(analytics, "call_duration", {
+				clientId: clientId,
+				duration: duration,
+			});
+
 			const [existingTransaction] = await Promise.all([
 				fetch(`/api/v1/calls/transaction/getTransaction?callId=${chatId}`).then(
 					(res) => res.json()
@@ -43,7 +52,6 @@ export const handleTransaction = async ({
 			]);
 
 			if (existingTransaction) {
-				console.log('2')
 				await fetch("/api/v1/calls/transaction/update", {
 					method: "PUT",
 					body: JSON.stringify({
@@ -54,7 +62,6 @@ export const handleTransaction = async ({
 					}),
 				});
 			} else {
-				console.log("3")
 				// Create a new document if no existing document is found
 				await fetch("/api/v1/calls/transaction/create", {
 					method: "POST",
@@ -88,15 +95,19 @@ export const handleTransaction = async ({
 					headers: { "Content-Type": "application/json" },
 				}),
 			]);
+			setTransactionDone(false);
 		}
 	} catch (error) {
+		Sentry.captureException(error);
 		console.error("Error handling wallet changes:", error);
 		toast({
+			variant: "destructive",
 			title: "Error",
 			description: "An error occurred while processing the Transactions",
 		});
-		router.push("/");
+		router.push("/home");
 	} finally {
 		updateWalletBalance();
+		localStorage.removeItem("user2");
 	}
 };

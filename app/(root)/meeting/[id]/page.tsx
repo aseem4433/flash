@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useUser } from "@clerk/nextjs";
 import {
 	StreamCall,
 	StreamTheme,
@@ -18,24 +17,28 @@ import { Cursor, Typewriter } from "react-simple-typewriter";
 import { useWalletBalanceContext } from "@/lib/context/WalletBalanceContext";
 import SinglePostLoader from "@/components/shared/SinglePostLoader";
 import ContentLoading from "@/components/shared/ContentLoading";
+import { useCurrentUsersContext } from "@/lib/context/CurrentUsersContext";
+import { logEvent } from "firebase/analytics";
+import { analytics } from "@/lib/firebase";
 
 const MeetingPage = () => {
 	const { id } = useParams();
-	// const searchParams = useSearchParams();
 	const router = useRouter();
 	const { toast } = useToast();
 	const { call, isCallLoading } = useGetCallById(id);
-	const { user } = useUser();
+	const { currentUser } = useCurrentUsersContext();
+	const creatorURL = localStorage.getItem("creatorURL");
 
 	useEffect(() => {
 		if (!isCallLoading && !call) {
 			toast({
+				variant: "destructive",
 				title: "Call Not Found",
-				description: "Redirecting to HomePage...",
+				description: "Redirecting Back...",
 			});
 			setTimeout(() => {
-				router.push("/");
-			}, 3000);
+				router.push(`${creatorURL ? creatorURL : "/home"}`);
+			}, 1000);
 		}
 	}, [isCallLoading, call, router, toast]);
 
@@ -53,8 +56,7 @@ const MeetingPage = () => {
 	const expert = call?.state?.members?.find(
 		(member) => member.custom.type === "expert"
 	);
-	const isMeetingOwner =
-		user?.publicMetadata?.userId === call?.state?.createdBy?.id;
+	const isMeetingOwner = currentUser?._id === call?.state?.createdBy?.id;
 
 	return (
 		<main className="h-full w-full">
@@ -64,6 +66,7 @@ const MeetingPage = () => {
 						isVideoCall={isVideoCall}
 						isMeetingOwner={isMeetingOwner}
 						expert={expert}
+						call={call}
 					>
 						<MeetingRoomWrapper toast={toast} router={router} call={call} />
 					</CallTimerProvider>
@@ -92,34 +95,79 @@ const CallEnded = ({ toast, router, call }: any) => {
 	const [loading, setLoading] = useState(false);
 	const [toastShown, setToastShown] = useState(false);
 	const transactionHandled = useRef(false);
-	const { user } = useUser();
+	const { currentUser } = useCurrentUsersContext();
 
-	const isMeetingOwner =
-		user?.publicMetadata?.userId === call?.state?.createdBy?.id;
+	const removeActiveCallId = () => {
+		const activeCallId = localStorage.getItem("activeCallId");
+		if (activeCallId) {
+			localStorage.removeItem("activeCallId");
+			console.log("activeCallId removed successfully");
+		} else {
+			console.warn("activeCallId was not found in localStorage");
+		}
+	};
+
+	const isMeetingOwner = currentUser?._id === call?.state?.createdBy?.id;
+	const expert = call?.state?.members?.find(
+		(member: any) => member.custom.type === "expert"
+	);
+	const expertId = expert?.user_id;
+	const clientId = call?.state?.createdBy?.id;
+	const isBrowser = () => typeof window !== "undefined";
 
 	useEffect(() => {
+		// Calculate call duration
+		const callEndedTime = new Date(callEndedAt);
+		const callStartsAtTime = new Date(callStartsAt);
+		const duration = (
+			(callEndedTime.getTime() - callStartsAtTime.getTime()) /
+			1000
+		).toFixed(2);
+
+		const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+			navigator.sendBeacon(
+				"https://backend.flashcall.me/api/v1/calls/transaction/handleTransaction",
+				JSON.stringify({
+					expertId,
+					clientId,
+					callId: call?.id,
+					duration,
+					isVideoCall: call?.type === "default",
+				})
+			);
+		};
+
 		const handleCallEnd = async () => {
 			if (transactionHandled.current) return;
 
 			transactionHandled.current = true;
 
-			const callEndedTime = new Date(callEndedAt);
-			const callStartsAtTime = new Date(callStartsAt);
-			const duration = (
-				(callEndedTime.getTime() - callStartsAtTime.getTime()) /
-				1000
-			).toFixed(2);
-
 			if (!toastShown) {
 				toast({
+					variant: "destructive",
 					title: "Session Has Ended",
 					description: "Checking for Pending Transactions ...",
 				});
-
 				setToastShown(true);
 			}
 
 			setLoading(true);
+
+			// Stop camera and microphone
+			const stopMediaStreams = () => {
+				navigator.mediaDevices
+					.getUserMedia({ video: true, audio: true })
+					.then((mediaStream) => {
+						mediaStream.getTracks().forEach((track) => {
+							track.stop();
+						});
+					})
+					.catch((error) => {
+						console.error("Error stopping media streams: ", error);
+					});
+			};
+
+			stopMediaStreams();
 
 			await fetch("/api/v1/calls/updateCall", {
 				method: "POST",
@@ -135,52 +183,75 @@ const CallEnded = ({ toast, router, call }: any) => {
 				headers: { "Content-Type": "application/json" },
 			});
 
-			await handleTransaction({
-				call,
-				callId: call?.id,
-				duration: duration,
-				isVideoCall: call?.type === "default",
-				toast,
-				router,
-				updateWalletBalance,
-			});
+			// Trigger transaction in backend
+			const transactionResponse = await fetch(
+				"https://backend.flashcall.me/api/v1/calls/transaction/handleTransaction",
+				{
+					method: "POST",
+					body: JSON.stringify({
+						expertId,
+						clientId,
+						callId: call.id,
+						duration,
+						isVideoCall: call.type === "default",
+					}),
+					headers: {
+						"Content-Type": "application/json",
+					},
+				}
+			);
+
+			if (transactionResponse.ok) {
+				// Execute the logic after successful transaction
+				removeActiveCallId();
+				logEvent(analytics, "call_ended", {
+					callId: call.id,
+					duration,
+					type: call.type === "default" ? "video" : "audio", // Assuming you want to log type as "video" or "audio"
+				});
+
+				setLoading(false);
+				updateWalletBalance();
+				router.replace(`/feedback/${call.id}`);
+			} else {
+				console.error("Failed to process transaction");
+				const creatorURL = localStorage.getItem("creatorURL");
+				router.replace(`${creatorURL ? creatorURL : "/home"}`);
+			}
 		};
 
-		if (!callEndedAt || !callStartsAt) {
-			if (!toastShown) {
-				toast({
-					title: "Call Has Ended",
-					description: "Call data is missing. Redirecting...",
-				});
-				setToastShown(true);
-			}
-			setTimeout(() => {
-				router.push("/");
-			}, 3000);
-			return;
+		if (isBrowser()) {
+			window.addEventListener("beforeunload", handleBeforeUnload);
 		}
 
 		if (isMeetingOwner && !transactionHandled.current) {
 			handleCallEnd();
-		} else {
-			router.push(`/feedback/${call?.id}`);
+		} else if (!isMeetingOwner) {
+			router.push(`/home`);
 		}
+
+		return () => {
+			if (isBrowser()) {
+				window.removeEventListener("beforeunload", handleBeforeUnload);
+			}
+		};
 	}, [
+		isMeetingOwner,
 		callEndedAt,
 		callStartsAt,
-		isMeetingOwner,
 		call?.id,
-		router,
 		toast,
-		toastShown,
+		router,
 		updateWalletBalance,
+		toastShown,
+		currentUser?.phone,
 	]);
 
 	if (loading) {
 		return (
 			<section className="w-full h-screen flex flex-col items-center justify-center gap-4">
 				<ContentLoading />
-				<h1 className="text-xl md:text-2xl font-semibold mt-7">
+				<h1 className="text-xl md:text-2xl font-semibold">
 					<Typewriter
 						words={["Checking Pending Transactions", "Please Wait ..."]}
 						loop={true}
